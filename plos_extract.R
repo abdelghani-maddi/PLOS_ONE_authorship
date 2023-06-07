@@ -1,5 +1,5 @@
 #####################################################################
-### Analyse de données plos one ### test
+### Analyse de données plos one ### test 
 #####################################################################
 rm(list = ls()) #supprimer tous les objets 
 
@@ -9,7 +9,7 @@ library(rvest)
 library(dplyr)
 
 
-# Spécifiez l'URL de la page
+# Spécifier l'URL de la page
 url <- "https://journals.plos.org/plosone/article/authors?id=10.1371/journal.pone.0286102"
 
 # Lisez le contenu de la page
