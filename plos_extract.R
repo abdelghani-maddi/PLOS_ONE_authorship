@@ -1,5 +1,5 @@
 #####################################################################
-### Analyse de données plos one ### test 
+### Analyse de données plos one ### 
 #####################################################################
 rm(list = ls()) #supprimer tous les objets 
 
