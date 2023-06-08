@@ -26,20 +26,19 @@ df <- df %>%
 
 # Grouper le dataframe par "authors" et "DOI" et compter le nombre de "Roles" pour chaque groupe
 result <- df %>%
+  select(authors, DOI, Roles) %>%
   group_by(authors, DOI) %>%
   summarize(num_roles = n())
 
 
 # Effectuer un left join entre result et df en utilisant le DOI comme clé
-merged_df <- merge(df, result, by = "DOI", all.x = TRUE, all.y = FALSE)
+merged_df <- merge(df, result, by = c("DOI","authors"), all.x = TRUE)
 
 
 # suspects papers
-
-
 # Sélectionner les auteurs qui ont num_roles < 3 et "Funding acquisition"
 filtered_df <- merged_df %>%
-  filter(authors_num < 3, Roles == "Funding acquisition")
+  filter(num_roles < 2, Roles == "Funding acquisition")
 
 suspects_authors <- filtered_df %>%
   select(authors, DOI, num_roles)
