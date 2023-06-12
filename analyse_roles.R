@@ -146,6 +146,9 @@ df_aff <- as.data.frame(df_aff)
 # Convertir la colonne Affiliations en type caractère
 df_aff$Affiliations <- as.character(df_aff$Affiliations)
 
+write.xlsx(df_aff, "~/Documents/APC Jaime Texiera/df_aff.xlsx")
+
+
 # Eclater le dataframe
 library(tidyverse)
 
