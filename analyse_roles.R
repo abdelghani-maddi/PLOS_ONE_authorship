@@ -207,8 +207,8 @@ extract_info <- function(url) {
 }
 
 # List of DOI
-dois <- suspects_authors$DOI
-
+# dois <- suspects_authors$DOI
+dois <- row_data$DOI
 # Loop through the DOI list
 for (doi in dois) {
   # Construct the URL of the page
@@ -340,4 +340,8 @@ suspects_authors <- suspects_authors %>%
 # Compter le nombre de lignes par pays
 country_counts <- table(suspects_authors$Country) %>%
   as.data.frame()
+
+
+# Calculer la somme de frac_geo par pays
+sum_by_country <- aggregate(frac_geo ~ Country, data = suspects_authors, FUN = sum)
 
