@@ -208,7 +208,12 @@ extract_info <- function(url) {
 
 # List of DOI
 # dois <- suspects_authors$DOI
-dois <- row_data$DOI
+# dois <- row_data$DOI
+
+#df_aff$DOI <- as.character(df_aff$DOI)
+#doi_restant <- filter(row_data, !DOI %in% (df_aff$DOI))
+dois <- doi_restant$DOI
+
 # Loop through the DOI list
 for (doi in dois) {
   # Construct the URL of the page
@@ -235,10 +240,10 @@ for (doi in dois) {
 }
 
 # Create a dataframe from the found results
-df_aff <- do.call(rbind, results)
+df_aff2 <- do.call(rbind, results)
 
 # Create a dataframe from the found results
-df_aff <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
+df_aff2 <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
 
 
 
