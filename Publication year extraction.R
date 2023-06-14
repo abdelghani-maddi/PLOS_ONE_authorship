@@ -17,7 +17,7 @@ extract_plos_data <- function(year) {
 }
 
 # Extraction des données pour chaque année
-years <- 2006:2012
+years <- 2018:2023
 all_data <- list()
 
 for (year in years) {
