@@ -245,7 +245,10 @@ df_aff2 <- do.call(rbind, results)
 # Create a dataframe from the found results
 df_aff2 <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
 
-
+df_aff3 <- rbind(df_aff, df_aff2)
+write.xlsx(df_aff3, "~/Documents/APC Jaime Texiera/df_aff3.xlsx")
+write_csv(df_aff3, "~/Documents/APC Jaime Texiera/df_aff3.csv")
+df_aff <- df_aff3
 
 df_doi_aff <- df_aff%>%
   select(DOI, Affiliations) %>%
