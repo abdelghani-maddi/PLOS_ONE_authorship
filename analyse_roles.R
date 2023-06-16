@@ -147,6 +147,8 @@ df_aff <- as.data.frame(df_aff)
 df_aff$Affiliations <- as.character(df_aff$Affiliations)
 
 write.xlsx(df_aff, "~/Documents/APC Jaime Texiera/df_aff.xlsx")
+df_aff <- read_excel("~/Documents/APC Jaime Texiera/df_aff3.xlsx")
+
 
 
 # Eclater le dataframe en utilisant la fonction map2 et strsplit
@@ -240,15 +242,11 @@ for (doi in dois) {
 }
 
 # Create a dataframe from the found results
-df_aff2 <- do.call(rbind, results)
+df_aff <- do.call(rbind, results)
 
 # Create a dataframe from the found results
-df_aff2 <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
+df_aff <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
 
-df_aff3 <- rbind(df_aff, df_aff2)
-write.xlsx(df_aff3, "~/Documents/APC Jaime Texiera/df_aff3.xlsx")
-write_csv(df_aff3, "~/Documents/APC Jaime Texiera/df_aff3.csv")
-df_aff <- df_aff3
 
 df_doi_aff <- df_aff%>%
   select(DOI, Affiliations) %>%
@@ -274,7 +272,12 @@ df_doi_aff <- df_doi_aff %>%
   separate_rows(Affiliation, sep = "\n") %>%
   mutate(Affiliation = gsub("^s    ", "", Affiliation))
 
-
+# Au fait, il y a 3698 DOI qui sautent parce qu'il s'agit en fait de corrections et non des articles originaux. 
+# Ce sont des "Corrections" d'autres articles de PLOS.
+# Nb : ils sautent parce qu'ils n'ont pas la page "adresse" dans le code source. 
+# a <- as.character(df_doi_aff$DOI) %>%
+#   unique() 
+# a <- subset(df_aff, !DOI %in% a)
 
 # Fonction pour extraire la ville
 extract_city <- function(affiliation) {
@@ -306,6 +309,12 @@ extract_country <- function(affiliation) {
 df_doi_aff$City <- sapply(df_doi_aff$Affiliation, extract_city)
 df_doi_aff$Country <- sapply(df_doi_aff$Affiliation, extract_country)
 
+## harminiser les graphies des pays
+harmo_pays <- read_excel("~/Documents/APC Jaime Texiera/harmo_pays.xlsx")
+# Modification de la colonne "Country" dans df_doi_aff
+df_doi_aff$Country <- ifelse(df_doi_aff$Country %in% harmo_pays$Country, harmo_pays$remplacement[match(df_doi_aff$Country, harmo_pays$Country)], df_doi_aff$Country)
+
+
 ### Faire les premières statistiques ---
 
 # Compter le nombre de pays par DOI
@@ -332,8 +341,10 @@ sum_by_country <- df_doi_aff %>%
   group_by(Country) %>%
   summarise(Somme_frac_geo = sum(frac_geo))
 
+write.xlsx(sum_by_country, "~/Documents/APC Jaime Texiera/sum_by_country5.xlsx")
+
 # Désactiver la notation scientifique
-options(scipen = 999)
+# options(scipen = 999)
 
 # left join des pays des auteurs suspects
 df_doi_aff$DOI <- as.character(df_doi_aff$DOI)
@@ -351,5 +362,67 @@ country_counts <- table(suspects_authors$Country) %>%
 
 
 # Calculer la somme de frac_geo par pays
-sum_by_country <- aggregate(frac_geo ~ Country, data = suspects_authors, FUN = sum)
+sum_by_country2 <- aggregate(frac_geo ~ Country, data = suspects_authors, FUN = sum)
+write.xlsx(sum_by_country2, "~/Documents/APC Jaime Texiera/sum_by_country_suspec.xlsx")
+
+# Extraire l'annee 
+# install.packages("openalexR")
+library(openalexR)
+library(dplyr)
+
+dois <- as.character(df_doi_aff$DOI) %>%
+  unique() 
+
+openalex_data <- oa_fetch(
+  entity = "works",
+  doi = dois,
+  verbose = TRUE
+)
+
+
+library(httr)
+library(jsonlite)
+library(openalexR)
+
+# Obtenir la liste unique des DOI à partir de df_doi_aff
+dois <- as.character(df_doi_aff$DOI) %>% unique()
+
+
+# Créer une liste pour stocker les données
+all_data <- list()
+
+# Parcourir chaque DOI et récupérer les données
+for (doi in dois) {
+  url <- paste0("https://api.openalex.org/works?filter=doi%3A", doi)
+  response <- GET(url)
+  
+  if (http_type(response) == "application/json") {
+    data <- fromJSON(content(response, "text"))
+    all_data[[doi]] <- data
+  } else {
+    all_data[[doi]] <- NULL
+    print(paste0("Error: Failed to retrieve data for DOI ", doi))
+  }
+}
+
+# Convertir la liste en un data frame
+
+# Convertir la liste en un data frame
+df <- all_data %>%
+  map_df(~ as.data.frame(t(unlist(.))), .id = "DOI")
+
+# Réorganiser les colonnes
+df <- df[, c("DOI", names(all_data[[1]]))]
+
+
+
+
+# Afficher les données récupérées
+for (doi in dois) {
+  if (!is.null(all_data[[doi]])) {
+    print(paste0("Data for DOI ", doi, ":"))
+    print(all_data[[doi]])
+    print("----------")
+  }
+}
 
