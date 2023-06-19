@@ -58,6 +58,7 @@ filtered_df <- merged_df %>%
 suspects_authors <- filtered_df %>%
   select(authors, DOI, authors_num, num_roles)
 
+write.xlsx(suspects_authors, "~/Documents/APC Jaime Texiera/suspects_authors.xlsx")
 
 
 
@@ -357,11 +358,9 @@ write.xlsx(sum_by_country, "~/Documents/APC Jaime Texiera/sum_by_country5.xlsx")
 df_doi_aff$DOI <- as.character(df_doi_aff$DOI)
 
 suspects_authors <- suspects_authors %>%
-  left_join(df_doi_aff, by = c("DOI", "authors_num")) 
+  select(DOI) %>%
+  left_join(df_doi_aff, by = c("DOI")) 
 
-suspects_authors <- suspects_authors %>%
-  select(DOI, authors, authors_num, Country, frac_geo) %>%
-  unique()
 
 # Compter le nombre de lignes par pays
 country_counts <- table(suspects_authors$Country) %>%
