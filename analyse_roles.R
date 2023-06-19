@@ -65,8 +65,6 @@ suspects_authors <- filtered_df %>%
 
 # Load the rvest library
 library(rvest)
-# Load the rvest library
-library(rvest)
 
 # Create an empty list to store the results
 results <- list()
@@ -247,6 +245,9 @@ df_aff <- do.call(rbind, results)
 # Create a dataframe from the found results
 df_aff <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
 
+# Filtrer les lignes où "Affiliation" n'est pas NA
+df_aff <- df_aff[!is.na(df_aff$Affiliations), ]
+
 
 df_doi_aff <- df_aff%>%
   select(DOI, Affiliations) %>%
@@ -255,7 +256,7 @@ df_doi_aff <- df_aff%>%
   mutate(authors_num = row_number()) %>%
   ungroup() 
 
-
+# country <- read_excel("~/Documents/APC Jaime Texiera/countries.xlsx")
 
 df_doi_aff <- df_doi_aff %>%
   mutate(Affiliations = purrr::map(Affiliations, unlist)) %>%
@@ -267,10 +268,17 @@ df_doi_aff <- df_doi_aff %>%
   select(-row_num)
 
 
+
 df_doi_aff <- df_doi_aff %>%
   mutate(Affiliation = ifelse(substr(Affiliation, 1, 5) != "s    ", Affiliation, gsub(",     ", "\n", Affiliation))) %>%
   separate_rows(Affiliation, sep = "\n") %>%
   mutate(Affiliation = gsub("^s    ", "", Affiliation))
+
+
+
+df_doi_aff <- df_doi_aff %>%
+  separate_rows(Affiliation, sep = ", s\\s{2,}")
+
 
 # Au fait, il y a 3698 DOI qui sautent parce qu'il s'agit en fait de corrections et non des articles originaux. 
 # Ce sont des "Corrections" d'autres articles de PLOS.
@@ -306,7 +314,6 @@ extract_country <- function(affiliation) {
 }
 
 # Appliquer les fonctions aux affiliations du dataframe
-df_doi_aff$City <- sapply(df_doi_aff$Affiliation, extract_city)
 df_doi_aff$Country <- sapply(df_doi_aff$Affiliation, extract_country)
 
 ## harminiser les graphies des pays
@@ -365,64 +372,154 @@ country_counts <- table(suspects_authors$Country) %>%
 sum_by_country2 <- aggregate(frac_geo ~ Country, data = suspects_authors, FUN = sum)
 write.xlsx(sum_by_country2, "~/Documents/APC Jaime Texiera/sum_by_country_suspec.xlsx")
 
-# Extraire l'annee 
-# install.packages("openalexR")
-library(openalexR)
-library(dplyr)
-
-dois <- as.character(df_doi_aff$DOI) %>%
-  unique() 
-
-openalex_data <- oa_fetch(
-  entity = "works",
-  doi = dois,
-  verbose = TRUE
-)
-
-
+# Extraire l'annee et autre metadonées
+library(purrr)
 library(httr)
 library(jsonlite)
-library(openalexR)
+library(progressr)
 
 # Obtenir la liste unique des DOI à partir de df_doi_aff
-dois <- as.character(df_doi_aff$DOI) %>% unique()
+dois <- unique(df_doi_aff$DOI)
 
-
-# Créer une liste pour stocker les données
-all_data <- list()
-
-# Parcourir chaque DOI et récupérer les données
-for (doi in dois) {
+# Fonction pour récupérer les données à partir d'un DOI en toute sécurité
+get_data_safe <- safely(function(doi) {
   url <- paste0("https://api.openalex.org/works?filter=doi%3A", doi)
   response <- GET(url)
   
   if (http_type(response) == "application/json") {
     data <- fromJSON(content(response, "text"))
-    all_data[[doi]] <- data
+    return(data)
   } else {
-    all_data[[doi]] <- NULL
-    print(paste0("Error: Failed to retrieve data for DOI ", doi))
+    message(paste0("Error: Failed to retrieve data for DOI ", doi))
+    return(NULL)
   }
-}
+})
 
-# Convertir la liste en un data frame
+# Récupérer les données pour chaque DOI avec affichage de la progression
+all_data <- imap(dois, ~{
+  data <- get_data_safe(.x)$result
+  
+  # Affichage de la progression
+  cat("Progress:", .y, "out of", length(dois), "\n")
+  
+  return(data)
+})
 
-# Convertir la liste en un data frame
-df <- all_data %>%
-  map_df(~ as.data.frame(t(unlist(.))), .id = "DOI")
+# Nom du fichier de sauvegarde
+nom_fichier <- "~/Documents/APC Jaime Texiera/openalex.rds"
 
-# Réorganiser les colonnes
-df <- df[, c("DOI", names(all_data[[1]]))]
+# Sauvegarder la liste (au cas où:-))
+# saveRDS(all_data, nom_fichier)
+
+# lire le fichier sauvegardé
+openalex <- readRDS(nom_fichier)
+
+# 
+data_openalex <- as.data.frame(openalex[[3]][["results"]])
+
+# Utiliser map_dfr pour convertir et combiner les données
+# openalex[[1]][["results"]][["publication_date"]]
+openalex_doi <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["doi"]]))
+names(openalex_doi) <- "DOI"
+openalex_date <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["publication_date"]]))
+names(openalex_date) <- "date"
+openalex_year <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["publication_year"]]))
+names(openalex_year) <- "annee"
+openalex_retrac <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["is_retracted"]]))
+names(openalex_retrac) <- "is_retracted"
+openalex_type <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["type"]]))
+names(openalex_type) <- "type"
+
+# Fusionner les dataframes en utilisant les noms de lignes (approche Reduce() avec merge())
+data_openalex_date <- merge(openalex_doi, openalex_date, by = "row.names")
+write.xlsx(data_openalex_date, "~/Documents/APC Jaime Texiera/data_openalex_date.xlsx" , all = TRUE)
+
+data_openalex_py <- merge(openalex_doi, openalex_year, by = "row.names")
+write.xlsx(openalex_year, "~/Documents/APC Jaime Texiera/data_openalex_py.xlsx" , all = TRUE)
+
+data_openalex_type <- merge(openalex_doi, openalex_type, by = "row.names")
+write.xlsx(data_openalex_type, "~/Documents/APC Jaime Texiera/data_openalex_type.xlsx" , all = TRUE)
+
+# Grouper par année et compter le nombre de DOI
+count_by_year <- data_openalex_py %>%
+  group_by(annee) %>%
+  summarize(count = n())
+
+
+# Grouper par année et compter le nombre de DOI
+count_by_type <- data_openalex_type %>%
+  group_by(type) %>%
+  summarize(count = n())
+
+# Harmoniser les DOI dans data_openalex_date
+data_openalex_date$DOI <- gsub("https://doi.org/", "", data_openalex_date$DOI)
+
+# Fusionner les dataframes en utilisant le DOI
+df_doi_aff_py <- merge(data_openalex_date, df_doi_aff, by = "DOI", all.x = TRUE)
+
+# Filtrer les lignes où "Affiliation" n'est pas NA
+df_doi_aff_py <- df_doi_aff_py[!is.na(df_doi_aff_py$Affiliation), ]
+
+# Convertir la colonne "date" en format Date
+library(lubridate)
+df_doi_aff_py$date <- as.Date(df_doi_aff_py$date)
+
+
+# Extraire l'année à partir de la variable "date"
+df_doi_aff_py$annee <- year(df_doi_aff_py$date)
+
+
+# Compter le nombre de DOI par année
+count_by_year <- df_doi_aff_py %>%
+  select(DOI, annee) %>%
+  unique() %>%
+  group_by(annee) %>%
+  summarize(count = n())
+write.xlsx(count_by_year, "~/Documents/APC Jaime Texiera/count_by_year.xlsx" , all = TRUE)
+
+
+
+library(dplyr)
 
 
 
 
-# Afficher les données récupérées
-for (doi in dois) {
-  if (!is.null(all_data[[doi]])) {
-    print(paste0("Data for DOI ", doi, ":"))
-    print(all_data[[doi]])
-    print("----------")
-  }
-}
 
+# Créer une nouvelle colonne "misc_type" avec restriction pour "Do not meet authorship criteria"
+# Créer une nouvelle colonne "misc_type" avec les conditions spécifiées
+data_roles$misc_type <- ifelse(data_roles$roles_corr == "Funding acquisition" & data_roles$funding == "The authors received no specific funding for this work.",
+                               "APC-ring",
+                               ifelse(data_roles$roles_corr %in% c("Funding acquisition", "Resources") | 
+                                        (data_roles$roles_corr == "Resources" & !grepl("(Conceptualization|Data curation|Supervision|Project administration|Formal analysis|Investigation|Methodology|Software|Validation|Visualization|Writing – review \\& editing|Writing – original draft preparation)", data_roles$roles_corr)),
+                                      "Authorship through silver",
+                                      ifelse(data_roles$roles_corr %in% c("Funding acquisition", "Resources", "Supervision", "Project administration") & !grepl("(Conceptualization|Data curation|Formal analysis|Investigation|Methodology|Software|Validation|Visualization|Writing – review \\& editing|Writing – original draft preparation)", data_roles$roles_corr),
+                                             "Do not meet authorship criteria",
+                                             NA)))
+
+## Recoding data_roles$misc_type
+data_roles$misc_type <- data_roles$misc_type %>%
+  fct_explicit_na("Authorship meets the criteria defined by PLOS One")
+
+
+# Calculer le nombre distinct de DOI par misc_type
+distinct_counts <- data_roles %>%
+  group_by(misc_type) %>%
+  summarize(distinct_DOI = n_distinct(DOI))
+write.xlsx(distinct_counts, "~/Documents/APC Jaime Texiera/misc_type.xlsx" , all = TRUE)
+
+
+
+# Compter le nombre de misc_type par DOI
+count_misc_type <- data_roles %>%
+  group_by(DOI) %>%
+  summarize(num_misc_type = n_distinct(misc_type))
+
+
+# Compter le nombre de DOI avec num_misc_type > 1
+count_multiple_misc_type <- data_roles %>%
+  group_by(DOI) %>%
+  summarize(num_misc_type = n_distinct(misc_type)) %>%
+  filter(num_misc_type > 1)
+
+
+merged_data <- merge(suspects_authors, data_roles, by = c("DOI", "authors"), all.x = TRUE)
