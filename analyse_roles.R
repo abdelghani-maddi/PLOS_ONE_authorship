@@ -12,6 +12,7 @@ library(gtsummary)
 library(openxlsx2)
 library(openxlsx)
 library(readxl)
+library(openalexR)
 
 ### Lecture des données ----
 
@@ -428,16 +429,101 @@ openalex_retrac <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["i
 names(openalex_retrac) <- "is_retracted"
 openalex_type <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["type"]]))
 names(openalex_type) <- "type"
+openalex_id <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["id"]]))
+names(openalex_id) <- "id"
 
 # Fusionner les dataframes en utilisant les noms de lignes (approche Reduce() avec merge())
 data_openalex_date <- merge(openalex_doi, openalex_date, by = "row.names")
 write.xlsx(data_openalex_date, "~/Documents/APC Jaime Texiera/data_openalex_date.xlsx" , all = TRUE)
+
+data_openalex_id <- merge(openalex_id, openalex_date, by = "row.names")
+write.xlsx(data_openalex_id, "~/Documents/APC Jaime Texiera/data_openalex_id.xlsx" , all = TRUE)
 
 data_openalex_py <- merge(openalex_doi, openalex_year, by = "row.names")
 write.xlsx(openalex_year, "~/Documents/APC Jaime Texiera/data_openalex_py.xlsx" , all = TRUE)
 
 data_openalex_type <- merge(openalex_doi, openalex_type, by = "row.names")
 write.xlsx(data_openalex_type, "~/Documents/APC Jaime Texiera/data_openalex_type.xlsx" , all = TRUE)
+
+
+
+
+
+
+
+
+# Créer une liste vide pour stocker les éléments extraits
+extracted_elements <- list()
+
+# Boucle pour extraire les éléments de 1 à 20
+for (i in 1:20) {
+  raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["raw_affiliation_string"]]
+  extracted_elements[[i]] <- raw_affiliation_string
+}
+
+
+# Créer un dataframe avec deux colonnes : id et affiliation
+df <- data.frame(id = integer(),
+                 affiliation = character(),
+                 stringsAsFactors = FALSE)
+
+# Remplir le dataframe avec les éléments extraits
+for (i in 1:length(extracted_elements)) {
+  df <- df %>% 
+    add_row(id = i, affiliation = extracted_elements[[i]])
+}
+df_aff_openalex <- df
+
+##### Pour les auteurs :
+
+# Créer une liste vide pour stocker les éléments extraits
+extracted_elements <- list()
+
+# Boucle pour extraire les éléments de 1 à 20
+for (i in 1:20) {
+  raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["author"]][["display_name"]]
+  extracted_elements[[i]] <- raw_affiliation_string
+}
+
+
+# Créer un dataframe avec deux colonnes : id et affiliation
+df <- data.frame(id = integer(),
+                 affiliation = character(),
+                 stringsAsFactors = FALSE)
+
+# Remplir le dataframe avec les éléments extraits
+for (i in 1:length(extracted_elements)) {
+  df <- df %>% 
+    add_row(id = i, affiliation = extracted_elements[[i]])
+}
+
+
+# Éclater la colonne "affiliation" au niveau de ";", en supprimant les entrées vides
+df_aut_openalex <- df %>% 
+  separate_rows(affiliation, sep = ";") %>% 
+  filter(affiliation != "")
+
+## merger les deux
+
+result_df <- merge(df_aut_openalex, df_aff_openalex, by = "row.names")
+
+# Éclater la colonne "affiliation" au niveau de ";", en supprimant les entrées vides
+df_aff_openalex <- df %>% 
+  separate_rows(affiliation, sep = ";") %>% 
+  filter(affiliation != "")
+
+
+# Réinitialiser les indices du dataframe
+rownames(df) <- NULL
+
+
+
+# Réinitialiser les indices du dataframe
+rownames(df) <- NULL
+
+
+
+
 
 # Grouper par année et compter le nombre de DOI
 count_by_year <- data_openalex_py %>%
@@ -475,12 +561,6 @@ count_by_year <- df_doi_aff_py %>%
   group_by(annee) %>%
   summarize(count = n())
 write.xlsx(count_by_year, "~/Documents/APC Jaime Texiera/count_by_year.xlsx" , all = TRUE)
-
-
-
-library(dplyr)
-
-
 
 
 
