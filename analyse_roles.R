@@ -456,7 +456,7 @@ write.xlsx(data_openalex_type, "~/Documents/APC Jaime Texiera/data_openalex_type
 extracted_elements <- list()
 
 # Boucle pour extraire les éléments de 1 à 20
-for (i in 1:20) {
+for (i in 1:91626) {
   raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["raw_affiliation_string"]]
   extracted_elements[[i]] <- raw_affiliation_string
 }
@@ -473,6 +473,7 @@ for (i in 1:length(extracted_elements)) {
     add_row(id = i, affiliation = extracted_elements[[i]])
 }
 df_aff_openalex <- df
+write.xlsx(df_aff_openalex, "~/Documents/APC Jaime Texiera/data_institutions_openalex.xlsx" , all = TRUE)
 
 ##### Pour les auteurs :
 
@@ -480,7 +481,7 @@ df_aff_openalex <- df
 extracted_elements <- list()
 
 # Boucle pour extraire les éléments de 1 à 20
-for (i in 1:20) {
+for (i in 1:91626) {
   raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["author"]][["display_name"]]
   extracted_elements[[i]] <- raw_affiliation_string
 }
@@ -502,27 +503,131 @@ for (i in 1:length(extracted_elements)) {
 df_aut_openalex <- df %>% 
   separate_rows(affiliation, sep = ";") %>% 
   filter(affiliation != "")
+write.xlsx(df_aut_openalex, "~/Documents/APC Jaime Texiera/data_authors_openalex.xlsx" , all = TRUE)
+
+# Nombre de lignes par id : affiliations
+result_aff <- df_aff_openalex %>%
+  group_by(id) %>%
+  summarise(count = n())
+
+# Nombre de lignes par id : affiliations
+result_aut <- df_aut_openalex %>%
+  group_by(id) %>%
+  summarise(count = n())
+
+result_aff_aut <- left_join(result_aff, result_aut, by = "id") 
+names(result_aff_aut) <- c("id", "nb_aff", "nb_aut")
+
+result_aff_aut$diff <- result_aff_aut$nb_aff-result_aff_aut$nb_aut 
+
+# id à exclure car il y a certains auteurs manquants (pas tous)
+id_a_exclure <- result_aff_aut %>%
+  subset(., .$diff>0) %>%
+  select(1)
 
 ## merger les deux
 
-result_df <- merge(df_aut_openalex, df_aff_openalex, by = "row.names")
+# 46 id avec information partielle sur les auteurs à exclure
+df_aff_openalex2 <- df_aff_openalex %>%
+  subset(., !(df_aff_openalex$id %in% id_a_exclure$id))%>%
+  group_by(id) %>%
+  mutate(seq = row_number())
 
-# Éclater la colonne "affiliation" au niveau de ";", en supprimant les entrées vides
-df_aff_openalex <- df %>% 
-  separate_rows(affiliation, sep = ";") %>% 
-  filter(affiliation != "")
+# 46 id avec information partielle sur les auteurs à exclure
+df_aut_openalex2 <- df_aut_openalex %>%
+  subset(., !(df_aut_openalex$id %in% id_a_exclure$id)) %>%
+  group_by(id) %>%
+  mutate(seq = row_number())
+
+# 975 id sans auteur à exclure
+setdif <- setdiff(df_aff_openalex2$id, df_aut_openalex2$id)
+
+df_aff_openalex2 <- df_aff_openalex2 %>%
+  subset(., !(df_aff_openalex2$id %in% setdif))
+
+# merge avec rownames pour préserver l'order et non avec left join
+df <- merge(df_aut_openalex2, df_aff_openalex2, by = c("id", "seq"))
+names(df) <- c("id","seq", "authors", "affiliations")
 
 
-# Réinitialiser les indices du dataframe
-rownames(df) <- NULL
 
 
 
-# Réinitialiser les indices du dataframe
-rownames(df) <- NULL
+## Idenfifiants
 
 
 
+# Créer une liste vide pour stocker les éléments extraits
+extracted_elements <- list()
+
+# Boucle pour extraire les éléments de 1 à 20
+for (i in 1:91626) {
+  raw_affiliation_string <- openalex[[i]][["results"]][["ids"]]
+  extracted_elements[[i]] <- raw_affiliation_string
+}
+
+# Combiner les éléments de la liste en un dataframe avec les 5 colonnes
+df_id <- bind_rows(extracted_elements)
+
+id_openalex <- df_id$openalex %>%
+  unique() %>%
+  as.data.frame() %>%
+  mutate(id = seq(1:91626))
+names(id_openalex) <- c("openalex", "id")
+
+df_id2 <- left_join(id_openalex, df_id, by = "openalex")
+
+write.xlsx(df_id, "~/Documents/APC Jaime Texiera/data_ids_openalex.xlsx" , all = TRUE)
+
+df2 <- left_join(df, df_id2, by = "id")
+
+df <- df2 
+
+# Supprimer les caractères "." et ";" à la fin de la colonne "affiliations"
+df$affiliations <- gsub("[.;]+$", "", df$affiliations)
+
+# Éclater la colonne "affiliations" en plusieurs lignes et dupliquer les autres colonnes
+df <- separate_rows(df, affiliations, sep = ";")
+
+# Remplacer les motifs "P.R. China", "PRC" et "P.R.C" par "China" dans la colonne "affiliations"
+df$affiliations <- gsub("P.R. China|PRC|P.R.C", "China", df$affiliations)
+
+data <- df
+# Extraire la dernière chaîne de caractères après la virgule de chaque élément de la colonne "affiliations"
+data$pays <- str_extract(data$affiliations, ",\\s*([^,]+)$")
+# Supprimer la virgule et l'espace du début de chaque chaîne dans la colonne "pays"
+data$pays <- str_replace(data$pays, ",\\s*", "")
+
+# Supprimer les caractères "." et ";" à la fin de la colonne "affiliations"
+data$pays <- gsub("[.;]+$", "", data$pays)
+# Mettre en majuscule la première lettre de chaque mot dans la colonne "pays"
+data$pays <- str_to_title(data$pays)
+# Remplacer les motifs "United States Of America", par "USA" dans la colonne "pays"
+data$pays <- gsub("United States Of America", "USA", data$pays)
+# Remplacer les motifs "Republic Of Korea", par "Korea" dans la colonne "pays"
+data$pays <- gsub("Republic Of Korea", "Korea", data$pays)
+# Remplacer les motifs "Republic Of Korea", par "Korea" dans la colonne "pays"
+data$pays <- gsub("Zoology Section Department Of Biology College Of Sciences Shiraz University Shiraz Iran", "Iran", data$pays)
+# Remplacer les motifs "Republic Of Korea", par "Korea" dans la colonne "pays"
+data$pays <- gsub("#N#", "", data$pays)
+# Supprimer les caractères spéciaux dans la colonne "pays" du DataFrame "df"
+data$pays <- gsub("[^[:alnum:] ]", "", data$pays)
+
+# Harmoniser les pays ----
+patterns <- read_excel("~/Documents/APC Jaime Texiera/patterns.xlsx")
+
+# Parcourir le dataframe "patterns" pour remplacer les valeurs correspondantes dans "data"
+for (i in 1:nrow(patterns)) {
+  # Récupérer le motif à rechercher et le remplacement associé
+  pattern <- patterns$patern[i]
+  replacement <- patterns$replace[i]
+  
+  # Utiliser grepl pour vérifier si le motif est présent dans chaque valeur de "pays"
+  # Si c'est le cas, effectuer le remplacement avec le motif spécifié dans "replace"
+  data$pays2[grepl(pattern, data$pays)] <- replacement
+}
+
+write.xlsx(data, "~/Documents/APC Jaime Texiera/data_pays.xlsx" , all = TRUE)
 
 
 # Grouper par année et compter le nombre de DOI
