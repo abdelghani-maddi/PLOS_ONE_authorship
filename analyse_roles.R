@@ -13,6 +13,10 @@ library(openxlsx2)
 library(openxlsx)
 library(readxl)
 library(openalexR)
+library(purrr)
+library(httr)
+library(jsonlite)
+library(progressr)
 
 ### Lecture des données ----
 
@@ -24,12 +28,10 @@ data_roles <- read_excel("~/Documents/APC Jaime Texiera/data_roles.xlsx")
 
 # Garder uniquement les DOI de notre échantillon PlosOne
 
-
-
-# Triez le dataframe par "DOI" et "authors_num" pour garantir l'ordre correct
+# Trier le dataframe par "DOI" et "authors_num" pour garantir l'ordre correct
 data_roles <- data_roles %>% arrange(DOI, authors_num)
 
-# Créez la nouvelle colonne "roles_corr" en utilisant la fonction lag() et ifelse()
+# Créer la nouvelle colonne "roles_corr" en utilisant la fonction lag() et ifelse()
 data_roles <- data_roles %>% 
   group_by(DOI) %>% 
   mutate(roles_corr = ifelse(authors_num == 1, "Writing – original draft", lag(Roles))) %>% 
@@ -50,237 +52,28 @@ result <- df %>%
 # Effectuer un left join entre result et df en utilisant le DOI comme clé
 merged_df <- merge(df, result, by = c("DOI","authors"), all.x = TRUE)
 
+# Selection variables d'intérêt
+data_roles <- merged_df %>%
+  select(DOI, authors, authors_num, roles_corr, num_roles, funding) 
+# Enregistrer ce resultat
+write.xlsx(data_roles, "~/Documents/APC Jaime Texiera/data_roles.xlsx")
+# Supprimer tables inutiles
+rm(df, merged_df, result)
 
 # suspects papers
 # Sélectionner les auteurs qui ont num_roles < 3 et "Funding acquisition"
-filtered_df <- merged_df %>%
-  filter(num_roles < 2, roles_corr == "Funding acquisition")
-
-suspects_authors <- filtered_df %>%
-  select(authors, DOI, authors_num, num_roles)
-
+suspects_authors <- data_roles %>%
+  filter(num_roles < 2, roles_corr == "Funding acquisition") %>%
+  select(authors, DOI, authors_num, num_roles, roles_corr)
 write.xlsx(suspects_authors, "~/Documents/APC Jaime Texiera/suspects_authors.xlsx")
 
-
-
+#########################################
 ## Ajouter l'affiliation des auteurs ----
-
-# Load the rvest library
-library(rvest)
-
-# Create an empty list to store the results
-results <- list()
-
-# Define the function to extract information from a page
-extract_info <- function(url) {
-  # Read the web page
-  webpage <- read_html(url)
-  
-  # Extract the DOI
-  doi <- webpage %>% html_nodes('meta[name="citation_doi"]') %>% html_attr("content")
-  
-  # Extract the funding information
-  funding <- webpage %>% html_nodes('p:contains("Funding:")') %>% html_text() %>% gsub("^.*Funding: ", "", .)
-  
-  # Extract the affiliations
-  affiliations <- webpage %>% html_nodes('p:contains("Affiliation")') %>% html_text() %>% gsub("^.*Affiliation", "", .) %>% trimws()
-  
-  # Extract the list of authors and their roles
-  authors <- webpage %>% html_nodes('a.author-name') %>% html_text()
-  
-  roles <- list()
-  
-  # Extract the roles for each author
-  for (i in seq_along(authors)) {
-    author_roles <- webpage %>%
-      html_nodes(paste0('a[data-author-id="', i, '"] ~ div.author-info p#authRoles')) %>%
-      html_text() %>%
-      gsub("^Roles", "", .) %>%
-      trimws()
-    
-    roles <- append(roles, list(author_roles))
-  }
-  
-  # Return the results as a list
-  result <- list(DOI = doi, Funding = funding, Affiliations = affiliations, Authors = authors, Roles = roles)
-  return(result)
-}
-
-# List of DOI
-dois <- suspects_authors$DOI
-
-# Loop through the DOI list
-for (doi in dois) {
-  # Construct the URL of the page
-  url <- paste0("https://journals.plos.org/plosone/article?id=", doi)
-  
-  # Try to extract the information from the page
-  tryCatch({
-    info <- extract_info(url)
-    
-    # Add the extracted information to the results list
-    results[[doi]] <- info
-    
-    # Display the progress
-    cat("DOI", doi, "extracted\n")
-  }, error = function(e) {
-    # Ignore the HTTP 404 error (page not found)
-    if (grepl("404", e$message)) {
-      cat("DOI", doi, "not found\n")
-    } else {
-      # Other errors not related to page not found
-      stop(e)
-    }
-  })
-}
-
-# Create a dataframe from the found results
-df_aff <- do.call(rbind, results)
-
-# Convert to dataframe
-df_aff <- as.data.frame(df_aff)
-
-# Eclater le dataframe
-
-
-# Convertir la colonne Affiliations en type caractère
-df_aff$Affiliations <- as.character(df_aff$Affiliations)
-
-write.xlsx(df_aff, "~/Documents/APC Jaime Texiera/df_aff.xlsx")
-df_aff <- read_excel("~/Documents/APC Jaime Texiera/df_aff3.xlsx")
-
-
-
-# Eclater le dataframe en utilisant la fonction map2 et strsplit
-df_eclate <- df_aff %>%
-  mutate(
-    Authors = map2(Authors, Affiliations, ~ strsplit(.x, ",")),
-    Affiliations = map2(Affiliations, Authors, ~ strsplit(.x, ",")) %>%
-      map(~ trimws(.x)) %>%
-      map(~ ifelse(.x == "", NA, .x))
-  ) %>%
-  unnest_longer(Authors) %>%
-  unnest(Affiliations) %>%
-  select(DOI, Authors, Affiliations)
-
-
-
-# Create an empty list to store the results
-results <- list()
-
-# Define the function to extract information from a page
-extract_info <- function(url) {
-  # Read the web page
-  webpage <- read_html(url)
-  
-  # Extract the DOI
-  doi <- webpage %>% html_nodes('meta[name="citation_doi"]') %>% html_attr("content")
-  
-  # Extract the funding information
-  funding <- webpage %>% html_nodes('p:contains("Funding:")') %>% html_text() %>% gsub("^.*Funding: ", "", .)
-  
-  # Extract the affiliations
-  affiliation_nodes <- webpage %>% html_nodes("p[id^='authAffiliations-']")
-  affiliations <- lapply(affiliation_nodes, function(node) {
-    affiliation <- node %>% html_text() %>% gsub("^.*Affiliation", "", .) %>% trimws()
-    affiliation <- gsub("\n", "", affiliation) # Supprimer les retours à la ligne éventuels
-    return(affiliation)
-  })
-  
-  # Extract the list of authors and their roles
-  authors <- webpage %>% html_nodes('a.author-name') %>% html_text()
-  
-  roles <- list()
-  
-  # Extract the roles for each author
-  for (i in seq_along(authors)) {
-    author_roles <- webpage %>%
-      html_nodes(paste0('a[data-author-id="', i, '"] ~ div.author-info p#authRoles')) %>%
-      html_text() %>%
-      gsub("^Roles", "", .) %>%
-      trimws()
-    
-    roles <- append(roles, list(author_roles))
-  }
-  
-  # Return the results as a list
-  result <- list(DOI = doi, Funding = funding, Affiliations = affiliations, Authors = authors, Roles = roles)
-  return(result)
-}
-
-# List of DOI
-# dois <- suspects_authors$DOI
-# dois <- row_data$DOI
-
-#df_aff$DOI <- as.character(df_aff$DOI)
-#doi_restant <- filter(row_data, !DOI %in% (df_aff$DOI))
-dois <- doi_restant$DOI
-
-# Loop through the DOI list
-for (doi in dois) {
-  # Construct the URL of the page
-  url <- paste0("https://journals.plos.org/plosone/article?id=", doi)
-  
-  # Try to extract the information from the page
-  tryCatch({
-    info <- extract_info(url)
-    
-    # Add the extracted information to the results list
-    results[[doi]] <- info
-    
-    # Display the progress
-    cat("DOI", doi, "extracted\n")
-  }, error = function(e) {
-    # Ignore the HTTP 404 error (page not found)
-    if (grepl("404", e$message)) {
-      cat("DOI", doi, "not found\n")
-    } else {
-      # Other errors not related to page not found
-      stop(e)
-    }
-  })
-}
-
-# Create a dataframe from the found results
-df_aff <- do.call(rbind, results)
-
-# Create a dataframe from the found results
-df_aff <- data.frame(do.call(rbind, results), stringsAsFactors = FALSE)
-
-# Filtrer les lignes où "Affiliation" n'est pas NA
-df_aff <- df_aff[!is.na(df_aff$Affiliations), ]
-
-
-df_doi_aff <- df_aff%>%
-  select(DOI, Affiliations) %>%
-  unnest(Affiliations) %>%
-  group_by(DOI) %>%
-  mutate(authors_num = row_number()) %>%
-  ungroup() 
-
-# country <- read_excel("~/Documents/APC Jaime Texiera/countries.xlsx")
-
-df_doi_aff <- df_doi_aff %>%
-  mutate(Affiliations = purrr::map(Affiliations, unlist)) %>%
-  unnest(Affiliations) %>%
-  group_by(DOI, authors_num) %>%
-  mutate(row_num = row_number()) %>%
-  pivot_longer(cols = starts_with("Affiliations"), names_to = "Affiliation_num", values_to = "Affiliation") %>%
-  ungroup() %>%
-  select(-row_num)
-
-
-
-df_doi_aff <- df_doi_aff %>%
-  mutate(Affiliation = ifelse(substr(Affiliation, 1, 5) != "s    ", Affiliation, gsub(",     ", "\n", Affiliation))) %>%
-  separate_rows(Affiliation, sep = "\n") %>%
-  mutate(Affiliation = gsub("^s    ", "", Affiliation))
-
-
-
-df_doi_aff <- df_doi_aff %>%
-  separate_rows(Affiliation, sep = ", s\\s{2,}")
-
+# Remarque importante : Récupérer dans Git les commits avant le 3 aout 2023 pour 
+# avoir le script de l'extraction à partir du site de PLOS ONE. 
+# Je n'ai gardé dans cette nouvelle version que l'extraction à partir de OpenaAlex 
+# car le parsing ne marche pas très bien en faisant du sccraping
+#########################################
 
 # Au fait, il y a 3698 DOI qui sautent parce qu'il s'agit en fait de corrections et non des articles originaux. 
 # Ce sont des "Corrections" d'autres articles de PLOS.
@@ -289,95 +82,10 @@ df_doi_aff <- df_doi_aff %>%
 #   unique() 
 # a <- subset(df_aff, !DOI %in% a)
 
-# Fonction pour extraire la ville
-extract_city <- function(affiliation) {
-  # Recherche du motif ville
-  city_match <- str_match(affiliation, ",\\s*(.*?),\\s*[^,]*$")[,2]
-  
-  # Vérification si la correspondance est trouvée
-  if (!is.na(city_match)) {
-    return(city_match)
-  } else {
-    return(NA)
-  }
-}
+# Extraire l'annee et autre metadonées de OpenAlex à partir de la liste des DOI
 
-# Fonction pour extraire le pays
-extract_country <- function(affiliation) {
-  # Recherche du motif pays
-  country_match <- str_match(affiliation, "\\s(\\S+)$")[,2]
-  
-  # Vérification si la correspondance est trouvée
-  if (!is.na(country_match)) {
-    return(country_match)
-  } else {
-    return(NA)
-  }
-}
-
-# Appliquer les fonctions aux affiliations du dataframe
-df_doi_aff$Country <- sapply(df_doi_aff$Affiliation, extract_country)
-
-## harminiser les graphies des pays
-harmo_pays <- read_excel("~/Documents/APC Jaime Texiera/harmo_pays.xlsx")
-# Modification de la colonne "Country" dans df_doi_aff
-df_doi_aff$Country <- ifelse(df_doi_aff$Country %in% harmo_pays$Country, harmo_pays$remplacement[match(df_doi_aff$Country, harmo_pays$Country)], df_doi_aff$Country)
-
-
-### Faire les premières statistiques ---
-
-# Compter le nombre de pays par DOI
-country_counts <- df_doi_aff %>%
-  group_by(DOI) %>%
-  summarise(Num_Pays = n_distinct(Country))
-
-
-
-# Calculer le nombre de lignes par DOI
-num_rows <- df_doi_aff %>%
-  group_by(DOI) %>%
-  summarise(Num_Lignes = n())
-
-# Ajouter une nouvelle colonne avec le calcul 1/Num_Lignes
-df_doi_aff <- df_doi_aff %>%
-  left_join(num_rows, by = "DOI") %>%
-  mutate(frac_geo = 1 / Num_Lignes)
-
-
-
-# Calculer la somme de frac_geo par Country
-sum_by_country <- df_doi_aff %>%
-  group_by(Country) %>%
-  summarise(Somme_frac_geo = sum(frac_geo))
-
-write.xlsx(sum_by_country, "~/Documents/APC Jaime Texiera/sum_by_country5.xlsx")
-
-# Désactiver la notation scientifique
-# options(scipen = 999)
-
-# left join des pays des auteurs suspects
-df_doi_aff$DOI <- as.character(df_doi_aff$DOI)
-
-suspects_authors <- suspects_authors %>%
-  select(DOI) %>%
-  left_join(df_doi_aff, by = c("DOI")) 
-
-
-# Compter le nombre de lignes par pays
-country_counts <- table(suspects_authors$Country) %>%
-  as.data.frame()
-
-
-# Calculer la somme de frac_geo par pays
-sum_by_country2 <- aggregate(frac_geo ~ Country, data = suspects_authors, FUN = sum)
-write.xlsx(sum_by_country2, "~/Documents/APC Jaime Texiera/sum_by_country_suspec.xlsx")
-
-# Extraire l'annee et autre metadonées
-library(purrr)
-library(httr)
-library(jsonlite)
-library(progressr)
-
+###################################################################
+### !! à exécuter une fois, puis charger le fichier en local !! ###
 # Obtenir la liste unique des DOI à partir de df_doi_aff
 dois <- unique(df_doi_aff$DOI)
 
@@ -404,19 +112,18 @@ all_data <- imap(dois, ~{
   
   return(data)
 })
-
-# Nom du fichier de sauvegarde
+###################################################################
+####           Nom du fichier de sauvegarde.                 ######
 nom_fichier <- "~/Documents/APC Jaime Texiera/openalex.rds"
-
-# Sauvegarder la liste (au cas où:-))
-# saveRDS(all_data, nom_fichier)
-
+###################################################################
 # lire le fichier sauvegardé
 openalex <- readRDS(nom_fichier)
 
-# 
-data_openalex <- as.data.frame(openalex[[3]][["results"]])
 
+###################################################################
+# Remarque : comme le fichier "openalex" fait 8.3Go, il est difficile de le manier avec mon orinateur en loclal
+#            j'ai donc opté pour des extraction par bouts des informations nécessaires pour l'analyse.
+ 
 # Utiliser map_dfr pour convertir et combiner les données
 # openalex[[1]][["results"]][["publication_date"]]
 openalex_doi <- map_dfr(openalex[1:91626], ~as.data.frame(.x[["results"]][["doi"]]))
@@ -444,29 +151,19 @@ write.xlsx(openalex_year, "~/Documents/APC Jaime Texiera/data_openalex_py.xlsx" 
 
 data_openalex_type <- merge(openalex_doi, openalex_type, by = "row.names")
 write.xlsx(data_openalex_type, "~/Documents/APC Jaime Texiera/data_openalex_type.xlsx" , all = TRUE)
-
-
-
-
-
-
-
+###################################################################
 
 # Créer une liste vide pour stocker les éléments extraits
 extracted_elements <- list()
-
 # Boucle pour extraire les éléments de 1 à 20
 for (i in 1:91626) {
   raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["raw_affiliation_string"]]
   extracted_elements[[i]] <- raw_affiliation_string
 }
-
-
 # Créer un dataframe avec deux colonnes : id et affiliation
 df <- data.frame(id = integer(),
                  affiliation = character(),
                  stringsAsFactors = FALSE)
-
 # Remplir le dataframe avec les éléments extraits
 for (i in 1:length(extracted_elements)) {
   df <- df %>% 
@@ -475,30 +172,87 @@ for (i in 1:length(extracted_elements)) {
 df_aff_openalex <- df
 write.xlsx(df_aff_openalex, "~/Documents/APC Jaime Texiera/data_institutions_openalex.xlsx" , all = TRUE)
 
+###################################################################
 ##### Pour les auteurs :
+library(tidyr)
 
-# Créer une liste vide pour stocker les éléments extraits
-extracted_elements <- list()
+# Créer des listes vides pour stocker les éléments extraits
+extracted_affiliations <- list()
+extracted_ids <- list()
+extracted_authors <- list()
+extracted_authors_id <- list()
 
-# Boucle pour extraire les éléments de 1 à 20
+# Boucle pour extraire les éléments
 for (i in 1:91626) {
-  raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["author"]][["display_name"]]
-  extracted_elements[[i]] <- raw_affiliation_string
+  raw_affiliation_string <- openalex[[i]][["results"]][["authorships"]][[1]][["raw_affiliation_string"]]
+  extracted_affiliations[[i]] <- raw_affiliation_string
+  
+  ids <- openalex[[i]][["results"]][["ids"]]
+  extracted_ids[[i]] <- paste(ids, collapse = ", ")
+  
+  authors <- openalex[[i]][["results"]][["authorships"]][[1]][["author"]][["display_name"]]
+  extracted_authors[[i]] <- authors
+  
+  authors_id <- openalex[[i]][["results"]][["authorships"]][[1]][["author"]][["id"]]
+  extracted_authors_id[[i]] <- authors
 }
 
-
-# Créer un dataframe avec deux colonnes : id et affiliation
+# Créer un dataframe avec plusieurs colonnes : id, affiliation, ids et auteurs
 df <- data.frame(id = integer(),
                  affiliation = character(),
+                 ids = character(),
+                 auteurs = character(),  # Nouvelle colonne pour les auteurs
+                 auteurs_id = character(),  # Nouvelle colonne pour les id des auteurs 
                  stringsAsFactors = FALSE)
 
 # Remplir le dataframe avec les éléments extraits
-for (i in 1:length(extracted_elements)) {
+for (i in 1:length(extracted_affiliations)) {
   df <- df %>% 
-    add_row(id = i, affiliation = extracted_elements[[i]])
+    add_row(id = i,
+            affiliation = extracted_affiliations[[i]],
+            ids = extracted_ids[[i]],
+            auteurs = paste(extracted_authors[[i]], collapse = ", "),
+            auteurs_id = paste(extracted_authors_id[[i]], collapse = ", "))
 }
 
+# Séparer la colonne auteurs en plusieurs lignes
+df_aut <- df %>%
+  select(id, auteurs) %>%
+  separate_rows(auteurs, sep = ", ") %>%
+  unique()
+# Nombre d'auteurs identifiés par id
+nb_aut_id <- df_aut %>%
+  group_by(id) %>%
+  count()
+names(nb_aut_id) <- c("id", "nb_auteurs")
+# Nombre d'adresses identifiées par id
+nb_aff_id <- df %>%
+  select(id, affiliation) %>%
+  group_by(id) %>%
+  count()
+names(nb_aut_id) <- c("id", "nb_aff")
 
+# Ne garder que les publications dont la liste des affiliations par ligne concorde au nombre d'auteurs
+diff_nb_aut_aff <- merge(nb_aut_id, nb_aff_id, by = "id") %>%
+  mutate(diff = nb_aff-n) %>%
+  filter(diff==0)
+
+# Faire la jointure
+# df auteurs
+data_aut <- df_aut %>%
+  filter(id %in% diff_nb_aut_aff$id)
+# df affiliations
+data_aff <- df %>%
+  filter(id %in% diff_nb_aut_aff$id)
+
+data <- merge(data_aff, data_aut, by = 0, all = TRUE) %>%
+  select(-Row.names) %>%
+  separate(ids, into = paste0("id_", 1:5), sep = ", ", fill = "right") %>%
+  filter(!is.na(affiliation) & affiliation != "") # Affiliations non disponibles dans les données d'openalex
+  
+write.xlsx(data, "~/Documents/APC Jaime Texiera/data_aff_openalex.xlsx" , all = TRUE)
+
+###################################################################
 # Éclater la colonne "affiliation" au niveau de ";", en supprimant les entrées vides
 df_aut_openalex <- df %>% 
   separate_rows(affiliation, sep = ";") %>% 
