@@ -173,9 +173,7 @@ df_aff_openalex <- df
 write.xlsx(df_aff_openalex, "~/Documents/APC Jaime Texiera/data_institutions_openalex.xlsx" , all = TRUE)
 
 ###################################################################
-##### Pour les auteurs :
-library(tidyr)
-
+##### extraction des affiliations, ids, auteurs
 # Créer des listes vides pour stocker les éléments extraits
 extracted_affiliations <- list()
 extracted_ids <- list()
@@ -249,108 +247,55 @@ data <- merge(data_aff, data_aut, by = 0, all = TRUE) %>%
   select(-Row.names) %>%
   separate(ids, into = paste0("id_", 1:5), sep = ", ", fill = "right") %>%
   filter(!is.na(affiliation) & affiliation != "") # Affiliations non disponibles dans les données d'openalex
-  
+
+
 write.xlsx(data, "~/Documents/APC Jaime Texiera/data_aff_openalex.xlsx" , all = TRUE)
 
 ###################################################################
+# "data_aff_openalex.xlsx" est ouvert avec read_excel, puis selection des variables d'intérêt
+data_aff_openalex <- read_excel("D:/APC Jaime T/data_aff_openalex.xlsx")
+data_aff <- data_aff_openalex %>%
+  mutate(id = id.x,
+         auteur = auteurs.y,
+         affiliations = affiliation,
+         openalex_id = id_1,
+         doi = id_2,
+         mag = id_3,
+         pmid = id_4,
+         pmcid = id_5) %>%
+  .[,12:18]
+rm(data_aff_openalex) # plus besoin de cette table
+####################################################################
 # Éclater la colonne "affiliation" au niveau de ";", en supprimant les entrées vides
-df_aut_openalex <- df %>% 
-  separate_rows(affiliation, sep = ";") %>% 
-  filter(affiliation != "")
-write.xlsx(df_aut_openalex, "~/Documents/APC Jaime Texiera/data_authors_openalex.xlsx" , all = TRUE)
+df_aut_aff <- data_aff %>%
+  mutate(affiliations = str_trim(affiliations)) %>%
+  separate_rows(affiliations, sep = "(?<=\\.)\\s*;", convert = TRUE) %>%
+  mutate(affiliations = str_replace(affiliations, "^\\s+", "")) %>%
+  filter(affiliations != "")
 
-# Nombre de lignes par id : affiliations
-result_aff <- df_aff_openalex %>%
-  group_by(id) %>%
-  summarise(count = n())
-
-# Nombre de lignes par id : affiliations
-result_aut <- df_aut_openalex %>%
-  group_by(id) %>%
-  summarise(count = n())
-
-result_aff_aut <- left_join(result_aff, result_aut, by = "id") 
-names(result_aff_aut) <- c("id", "nb_aff", "nb_aut")
-
-result_aff_aut$diff <- result_aff_aut$nb_aff-result_aff_aut$nb_aut 
-
-# id à exclure car il y a certains auteurs manquants (pas tous)
-id_a_exclure <- result_aff_aut %>%
-  subset(., .$diff>0) %>%
-  select(1)
-
-## merger les deux
-
-# 46 id avec information partielle sur les auteurs à exclure
-df_aff_openalex2 <- df_aff_openalex %>%
-  subset(., !(df_aff_openalex$id %in% id_a_exclure$id))%>%
-  group_by(id) %>%
-  mutate(seq = row_number())
-
-# 46 id avec information partielle sur les auteurs à exclure
-df_aut_openalex2 <- df_aut_openalex %>%
-  subset(., !(df_aut_openalex$id %in% id_a_exclure$id)) %>%
-  group_by(id) %>%
-  mutate(seq = row_number())
-
-# 975 id sans auteur à exclure
-setdif <- setdiff(df_aff_openalex2$id, df_aut_openalex2$id)
-
-df_aff_openalex2 <- df_aff_openalex2 %>%
-  subset(., !(df_aff_openalex2$id %in% setdif))
-
-# merge avec rownames pour préserver l'order et non avec left join
-df <- merge(df_aut_openalex2, df_aff_openalex2, by = c("id", "seq"))
-names(df) <- c("id","seq", "authors", "affiliations")
-
-
-
-
-
-## Idenfifiants
-
-
-
-# Créer une liste vide pour stocker les éléments extraits
-extracted_elements <- list()
-
-# Boucle pour extraire les éléments de 1 à 20
-for (i in 1:91626) {
-  raw_affiliation_string <- openalex[[i]][["results"]][["ids"]]
-  extracted_elements[[i]] <- raw_affiliation_string
-}
-
-# Combiner les éléments de la liste en un dataframe avec les 5 colonnes
-df_id <- bind_rows(extracted_elements)
-
-id_openalex <- df_id$openalex %>%
+# Vérifications : Nombre d'affiliations par auteur
+nb_aff_aut <- df_aut_aff %>%
+  select(id, auteur, affiliations) %>%
   unique() %>%
-  as.data.frame() %>%
-  mutate(id = seq(1:91626))
-names(id_openalex) <- c("openalex", "id")
+  group_by(id, auteur) %>%
+  count()
+# Parfait ! rm(nb_aff_aut)
+# Enregistrer au cas où
+write.xlsx(nb_aff_aut, "D:/APC Jaime T/nb_aff_aut.xlsx" , all = TRUE)
 
-df_id2 <- left_join(id_openalex, df_id, by = "openalex")
-
-write.xlsx(df_id, "~/Documents/APC Jaime Texiera/data_ids_openalex.xlsx" , all = TRUE)
-
-df2 <- left_join(df, df_id2, by = "id")
-
-df <- df2 
+#########################################################
+### Traitement des affiliations pour extraire les pays ##
+#########################################################
+data <- df_aut_aff
 
 # Supprimer les caractères "." et ";" à la fin de la colonne "affiliations"
-df$affiliations <- gsub("[.;]+$", "", df$affiliations)
-
-# Éclater la colonne "affiliations" en plusieurs lignes et dupliquer les autres colonnes
-df <- separate_rows(df, affiliations, sep = ";")
+data$affiliations <- gsub("[.;]+$", "", data$affiliations)
 
 # Remplacer les motifs "P.R. China", "PRC" et "P.R.C" par "China" dans la colonne "affiliations"
-df$affiliations <- gsub("P.R. China|PRC|P.R.C", "China", df$affiliations)
+data$affiliations <- gsub("P.R. China|PRC|P.R.C", "China", data$affiliations)
 
-data <- df
-# Extraire la dernière chaîne de caractères après la virgule de chaque élément de la colonne "affiliations"
-data$pays <- str_extract(data$affiliations, ",\\s*([^,]+)$")
-# Supprimer la virgule et l'espace du début de chaque chaîne dans la colonne "pays"
-data$pays <- str_replace(data$pays, ",\\s*", "")
+# Extraire la dernière chaîne de caractères après la virgule ou le point-virgule de chaque élément de la colonne "affiliations"
+data$pays <- sapply(strsplit(data$affiliations, "[;,]\\s*"), function(x) tail(x, 1))
 
 # Supprimer les caractères "." et ";" à la fin de la colonne "affiliations"
 data$pays <- gsub("[.;]+$", "", data$pays)
@@ -369,95 +314,130 @@ data$pays <- gsub("[^[:alnum:] ]", "", data$pays)
 
 # Harmoniser les pays ----
 patterns <- read_excel("~/Documents/APC Jaime Texiera/patterns.xlsx")
+rm(patterns)
+patterns <- read_excel("D:/APC Jaime T/patterns.xlsx")
 
 # Parcourir le dataframe "patterns" pour remplacer les valeurs correspondantes dans "data"
 for (i in 1:nrow(patterns)) {
   # Récupérer le motif à rechercher et le remplacement associé
   pattern <- patterns$patern[i]
   replacement <- patterns$replace[i]
-  
   # Utiliser grepl pour vérifier si le motif est présent dans chaque valeur de "pays"
   # Si c'est le cas, effectuer le remplacement avec le motif spécifié dans "replace"
-  data$pays2[grepl(pattern, data$pays)] <- replacement
+  data$pays_harmo[grepl(pattern, data$pays)] <- replacement
 }
+#########################################################
+# Enregistrer au cas où
+write.xlsx(data, "D:/APC Jaime T/data_pays.xlsx" , all = TRUE)
+#########################################################
+# Repartir directement de data précédemment enregistré (inutile de tout relancer)
+data <- read_excel("D:/APC Jaime T/data_pays.xlsx")
+#########################################################
+# # Harmoniser les DOI dans data
+# data$DOI <- gsub("https://doi.org/", "", data$doi)
+# data <- data %>%
+#   rename(authors = auteur)
+#########################################################
+# Nombre de publications par année
+data_openalex_date <- read_excel("D:/APC Jaime T/data_openalex_date.xlsx") %>%
+  select(DOI, date) %>%
+  mutate(date = as.Date(date)) %>%
+  mutate(annee = year(date))
 
-write.xlsx(data, "~/Documents/APC Jaime Texiera/data_pays.xlsx" , all = TRUE)
+# Ajout de l'année à data
+data <- data %>%
+  left_join(., data_openalex_date, by = c("doi" = "DOI")) 
 
-
-# Grouper par année et compter le nombre de DOI
-count_by_year <- data_openalex_py %>%
-  group_by(annee) %>%
-  summarize(count = n())
-
-
-# Grouper par année et compter le nombre de DOI
-count_by_type <- data_openalex_type %>%
-  group_by(type) %>%
-  summarize(count = n())
-
-# Harmoniser les DOI dans data_openalex_date
-data_openalex_date$DOI <- gsub("https://doi.org/", "", data_openalex_date$DOI)
-
-# Fusionner les dataframes en utilisant le DOI
-df_doi_aff_py <- merge(data_openalex_date, df_doi_aff, by = "DOI", all.x = TRUE)
-
-# Filtrer les lignes où "Affiliation" n'est pas NA
-df_doi_aff_py <- df_doi_aff_py[!is.na(df_doi_aff_py$Affiliation), ]
-
-# Convertir la colonne "date" en format Date
-library(lubridate)
-df_doi_aff_py$date <- as.Date(df_doi_aff_py$date)
-
-
-# Extraire l'année à partir de la variable "date"
-df_doi_aff_py$annee <- year(df_doi_aff_py$date)
-
-
-# Compter le nombre de DOI par année
-count_by_year <- df_doi_aff_py %>%
-  select(DOI, annee) %>%
+# Nombres
+nb_doc_annee <- data %>%
+  select(doi, annee) %>%
   unique() %>%
+  filter(!is.na(annee)) %>%
   group_by(annee) %>%
-  summarize(count = n())
-write.xlsx(count_by_year, "~/Documents/APC Jaime Texiera/count_by_year.xlsx" , all = TRUE)
-
-
-
+  count()
+# Exporter
+write.xlsx(nb_doc_annee, "D:/APC Jaime T/count_by_year.xlsx" , all = TRUE)
+#########################################################
+#########################################################
+# Enregistrer la nouvelle version de "data" avec les 2 colonnes sur l'année en plus, au cas où
+write.xlsx(data, "D:/APC Jaime T/data_pays.xlsx" , all = TRUE)
+#########################################################
+# Repartir directement de data précédemment enregistré (inutile de tout relancer)
+data <- read_excel("D:/APC Jaime T/data_pays.xlsx")
+#########################################################
 # Créer une nouvelle colonne "misc_type" avec restriction pour "Do not meet authorship criteria"
 # Créer une nouvelle colonne "misc_type" avec les conditions spécifiées
-data_roles$misc_type <- ifelse(data_roles$roles_corr == "Funding acquisition" & data_roles$funding == "The authors received no specific funding for this work.",
-                               "APC-ring",
-                               ifelse(data_roles$roles_corr %in% c("Funding acquisition", "Resources") | 
-                                        (data_roles$roles_corr == "Resources" & !grepl("(Conceptualization|Data curation|Supervision|Project administration|Formal analysis|Investigation|Methodology|Software|Validation|Visualization|Writing – review \\& editing|Writing – original draft preparation)", data_roles$roles_corr)),
-                                      "Authorship through silver",
-                                      ifelse(data_roles$roles_corr %in% c("Funding acquisition", "Resources", "Supervision", "Project administration") & !grepl("(Conceptualization|Data curation|Formal analysis|Investigation|Methodology|Software|Validation|Visualization|Writing – review \\& editing|Writing – original draft preparation)", data_roles$roles_corr),
-                                             "Do not meet authorship criteria",
-                                             NA)))
+data_roles_originale <- data_roles
+data_roles <- data_roles_originale
+# Ajout flag is_funded
+data_roles <- data_roles %>%
+  mutate(is_funded = ifelse(grepl("did not receive|no specific funding|any specific grant", funding, ignore.case = TRUE), 0, 1))
 
-## Recoding data_roles$misc_type
-data_roles$misc_type <- data_roles$misc_type %>%
-  fct_explicit_na("Authorship meets the criteria defined by PLOS One")
+# coder les roles
+roles <- data_roles_originale %>%
+  select(roles_corr) %>%
+  unique() %>% 
+  filter(!is.na(roles_corr) & !(roles_corr %in% "character(0)")) %>%
+  mutate(code_role = paste0("code ", seq(1:length(roles_corr))))
 
+# Ajout code roles 
+data_roles <- data_roles %>%
+  left_join(., roles, by = "roles_corr")
+
+
+# concaténer les roles
+data_roles <- data_roles %>%
+  select(DOI, authors, roles_corr, num_roles, funding, is_funded, code_role) %>%
+  group_by(DOI, authors, funding, is_funded) %>% # regrouper les roles pour identifier l'authorat inapproprié
+  summarize(code_role = paste(code_role, collapse = ", "))
+
+
+codes_misc <- c("code 30", "code 9", "code 8", "code 4", "code 5")
+other_codes <- paste(paste("code", setdiff(1:30, as.numeric(str_extract_all(valid_codes, "\\d+"))), sep = " "), collapse = "|")
+
+data_roles2 <- data_roles %>%
+  mutate(
+    type_misc = ifelse(
+      (code_role == "code 30" | code_role == "code 9") & is_funded == 0,
+      "APC ring",
+      ifelse(
+        str_detect(code_role, "code 30|code 9|code 8") & !(str_detect(code_role, "code 4|code 5")) & is_funded == 1 & !str_detect(code_role, other_codes),
+        "Authorship by resources",
+        ifelse(
+          str_detect(code_role, paste(valid_codes, collapse = "|")) & !str_detect(code_role, other_codes),
+          "Not meet authorship criteria",
+          "Authorship meets the criteria defined by PLOS One"
+        )
+      )
+    )
+  )
+
+write.xlsx(data_roles2, "D:/APC Jaime T/categories authorship.xlsx" , all = TRUE)
+
+###############################################################
+###############################################################
+# Se limiter aux DOI pour lesquels les infos sur les affiliations sont dispo
+###############################################################
+###############################################################
+doi_study <- data %>%
+  filter(!(annee == 2017) & !is.na(annee)) %>%
+  select(doi) %>%
+  unique() 
+# Supprimer la partie "https://doi.org/" de la colonne doi
+doi_study$doi <- gsub("^https://doi.org/", "", doi_study$doi)
+
+# appliquer le filtre + ajouter une colonne is_problematic
+data_roles_filtre <- data_roles2 %>%
+  filter(DOI %in% doi_study$doi) 
+# Enregistrer
+write.xlsx(data_roles_filtre, "D:/APC Jaime T/categories authorship filtre aux doi etude.xlsx" , all = TRUE)
 
 # Calculer le nombre distinct de DOI par misc_type
-distinct_counts <- data_roles %>%
-  group_by(misc_type) %>%
-  summarize(distinct_DOI = n_distinct(DOI))
+distinct_counts <- suppressWarnings({
+  data_roles_filtre %>%
+    select(DOI, type_misc) %>%
+    ungroup()
+})
+
 write.xlsx(distinct_counts, "~/Documents/APC Jaime Texiera/misc_type.xlsx" , all = TRUE)
 
-
-
-# Compter le nombre de misc_type par DOI
-count_misc_type <- data_roles %>%
-  group_by(DOI) %>%
-  summarize(num_misc_type = n_distinct(misc_type))
-
-
-# Compter le nombre de DOI avec num_misc_type > 1
-count_multiple_misc_type <- data_roles %>%
-  group_by(DOI) %>%
-  summarize(num_misc_type = n_distinct(misc_type)) %>%
-  filter(num_misc_type > 1)
-
-
-merged_data <- merge(suspects_authors, data_roles, by = c("DOI", "authors"), all.x = TRUE)
