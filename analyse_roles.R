@@ -387,12 +387,12 @@ data_roles <- data_roles %>%
 
 # concaténer les roles
 data_roles <- data_roles %>%
-  select(DOI, authors, roles_corr, num_roles, funding, is_funded, code_role) %>%
-  group_by(DOI, authors, funding, is_funded) %>% # regrouper les roles pour identifier l'authorat inapproprié
+  select(DOI, authors, roles_corr, authors_num, num_roles, funding, is_funded, code_role) %>%
+  group_by(DOI, authors,  authors_num, funding, is_funded) %>% # regrouper les roles pour identifier l'authorat inapproprié
   summarize(code_role = paste(code_role, collapse = ", "))
 
 
-codes_misc <- c("code 30", "code 9", "code 8", "code 4", "code 5")
+valid_codes <- c("code 30", "code 9", "code 8", "code 4", "code 5")
 other_codes <- paste(paste("code", setdiff(1:30, as.numeric(str_extract_all(valid_codes, "\\d+"))), sep = " "), collapse = "|")
 
 data_roles2 <- data_roles %>%
@@ -416,28 +416,213 @@ write.xlsx(data_roles2, "D:/APC Jaime T/categories authorship.xlsx" , all = TRUE
 
 ###############################################################
 ###############################################################
-# Se limiter aux DOI pour lesquels les infos sur les affiliations sont dispo
+# Se limiter aux DOI pour lesquels les infos sur les affiliations sont dispo + >=2 auteurs
 ###############################################################
 ###############################################################
 doi_study <- data %>%
   filter(!(annee == 2017) & !is.na(annee)) %>%
   select(doi) %>%
   unique() 
+
 # Supprimer la partie "https://doi.org/" de la colonne doi
 doi_study$doi <- gsub("^https://doi.org/", "", doi_study$doi)
+
+# Calculer le nombre d'auteurs par doi, car le phénomène concerne focément des copublications
+data_roles_originale <- data_roles_originale %>%
+  group_by(DOI) %>%
+  mutate(nb_aut = max(authors_num))
+
+# selectionner les collab >= auteurs
+nb_aut_doi <- data_roles_originale[,c(1,7)] %>%
+  unique() %>%
+  filter(nb_aut >=2)
+
+doi_study <- doi_study %>%
+  subset(doi %in% nb_aut_doi$DOI)
+
+write.xlsx(doi_study, "D:/APC Jaime T/doi_study.xlsx" , all = TRUE)
+
 
 # appliquer le filtre + ajouter une colonne is_problematic
 data_roles_filtre <- data_roles2 %>%
   filter(DOI %in% doi_study$doi) 
+
 # Enregistrer
 write.xlsx(data_roles_filtre, "D:/APC Jaime T/categories authorship filtre aux doi etude.xlsx" , all = TRUE)
 
-# Calculer le nombre distinct de DOI par misc_type
-distinct_counts <- suppressWarnings({
-  data_roles_filtre %>%
-    select(DOI, type_misc) %>%
-    ungroup()
-})
+# Ajouter des flags par type
+# Pivoter les données pour obtenir les modalités de type_misc en colonnes
+pivot_data <- data_roles_filtre %>%
+  select(DOI, type_misc) %>%
+  mutate(value = 1) %>%
+  pivot_wider(names_from = type_misc, values_from = value, values_fill = 0) %>%
+  .[,c(3:7)] %>%
+  unique() %>%
+  group_by(DOI) %>%
+  summarise(across(everything(), sum)) %>% # pour avoir sur la même lignes les différentes combinaisons 1 | 0 | 1 
+  group_by(across(-DOI)) %>% # Calculer le nombre distinct de DOI par misc_type
+  summarise(count = n_distinct(DOI)) 
 
-write.xlsx(distinct_counts, "~/Documents/APC Jaime Texiera/misc_type.xlsx" , all = TRUE)
+write.xlsx(pivot_data, "D:/APC Jaime T/misc_type.xlsx" , all = TRUE)
+
+#############################################################################
+#############################################################################
+###                      Analyse par pays                                ####
+#############################################################################
+#############################################################################
+rm(list = ls()) #supprimer tous les objets 
+
+### Chargement des packages ----
+
+library(tidyverse)
+library(questionr)
+library(RPostgres)
+library(gtsummary)
+library(openxlsx2)
+library(openxlsx)
+library(readxl)
+library(openalexR)
+library(purrr)
+library(httr)
+library(jsonlite)
+library(progressr)
+
+################################################################################
+# DOI de l'étude : avec les filtres
+doi_study <- read_excel("D:/APC Jaime T/doi_study.xlsx")
+
+# Données roles
+df_roles <- read_excel("D:/APC Jaime T/categories authorship.xlsx") %>%
+  filter(DOI %in% doi_study$doi)
+
+# données affiliations
+df_pays <- read_excel("D:/APC Jaime T/data_pays.xlsx") 
+
+# Supprimer la partie "https://doi.org/" de la colonne doi
+df_pays$doi <- gsub("^https://doi.org/", "", df_pays$doi)
+
+df_pays <- df_pays %>%
+  filter(doi %in% doi_study$doi) 
+
+# Faire un left join
+# Au fait, j'avais éliminé dans OpenAlex les doi pour lesquels tous les auteus n'ont pas d'institution, ou inversement
+# mais la taille des deux df, celui extrait d'openalex et celui de plos laisse entendre que celui de plos contient plus
+# d'auteurs identifiés, donc pour l'analyse des pays, il faut soustraire aussi les doi concernés, ou bien analyser les
+# différents authorship inaproprié sans lier aux auteurs. Faire le lien uniquement pour les APC ring
+
+# faire un left join
+# récupérer l'odre des auteurs dans plos data
+df_misc <- df_roles[,c(1,7)] %>%
+  unique()
+
+df_pays_misc <- df_pays %>%
+  left_join(., df_misc, by = c("doi" = "DOI")) %>%
+  .[,4:12] %>%
+  unique()
+# petite correction d'un vide constaté
+df_pays_misc$pays_harmo <- ifelse(df_pays_misc$pays=="Italia|Padova Italia", "Italy", df_pays_misc$pays_harmo)
+# essayer de récupérer le max de pays_harmo à partir des noms de villes ou autre (à ce stade il y a 2.7% de NA)
+df_na_pays <- df_pays_misc %>%
+  filter(is.na(pays_harmo))
+# write.xlsx(df_na_pays, "D:/APC Jaime T/df_na_pays.xlsx" , all = TRUE)
+
+####################################################################
+# réimporter df_na_pays.xlsx après avoir fait un travail manuel de 
+# nettoyage et correction des données
+####################################################################
+df_na_pays <- read_excel("D:/APC Jaime T/df_na_pays.xlsx")
+##
+df_pays_misc_corr <-  df_pays_misc %>%
+  filter(!(is.na(pays_harmo))) %>%
+  rbind(., df_na_pays)
+# maintenant 99,1% des adresses sont nettoyées et corrigées (pays de l'institution)
+write.xlsx(df_pays_misc_corr, "D:/APC Jaime T/df_pays_misc_corr.xlsx" , all = TRUE)
+
+# petite correction d'un vide constaté
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc$pays=="South Korea", "Korea", df_pays_misc$pays_harmo)
+
+####################################################################
+# compte fractionnaire
+df_pays_misc_corr <- df_pays_misc_corr %>%
+  group_by(doi, type_misc) %>%
+  mutate(frac = 1/n())
+
+# faire les comptes par pays par type de misc
+count_typ_misc <- df_pays_misc_corr %>%
+  group_by(pays_harmo, type_misc) %>%
+  summarise(nb_frac = sum(frac))
+
+# Nombres
+count_typ_misc <- df_pays_misc_corr %>%
+  group_by(type_misc) %>%
+  mutate(total_type_misc = sum(frac)) %>%
+  ungroup() %>%
+  group_by(pays_harmo, type_misc) %>%
+  summarise(total = sum(frac)) %>%
+  pivot_wider(names_from = type_misc, values_from = total, values_fill = 0)
+write.xlsx(count_typ_misc, "D:/APC Jaime T/count_typ_misc.xlsx" , all = TRUE)
+
+
+# Parts
+part_typ_misc <- df_pays_misc_corr %>%
+  group_by(type_misc) %>%
+  mutate(total_type_misc = sum(frac)) %>%
+  ungroup() %>%
+  group_by(pays_harmo, type_misc) %>%
+  summarise(part = sum(frac) / first(total_type_misc)) %>%
+  pivot_wider(names_from = type_misc, values_from = part, values_fill = 0)
+write.xlsx(part_typ_misc, "D:/APC Jaime T/part_typ_misc.xlsx" , all = TRUE)
+
+count_part_typ_misc <- merge(count_typ_misc, part_typ_misc, by = "pays_harmo")
+write.xlsx(count_part_typ_misc, "D:/APC Jaime T/count_part_typ_misc.xlsx" , all = TRUE)
+
+###
+
+#####################################################
+#####################################################
+# Recuperer pays
+require(rworldmap)
+data(countryExData)
+write.xlsx(countryExData, "D:/APC Jaime T/list_countries.xlsx" , all = TRUE)
+#####################################################
+# pays qui ne matchent pas avec countryExData
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Maroc", "Morocco", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="USA", "United States" , df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Central African Republic", "Central African Republic", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Czech Republic", "Czech Rep.", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Dominica", "Dominican Rep.", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="North Macedonia", "Macedonia", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Vietnam", "Viet Nam", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="United Arab Emirates", "United Arab Emirates", df_pays_misc_corr$pays_harmo)
+df_pays_misc_corr$pays_harmo <- ifelse(df_pays_misc_corr$pays_harmo=="Korea", "South Korea", df_pays_misc_corr$pays_harmo)
+
+# les scripts précédents sont donc relancés après cette correction.
+#####################################################
+
+df_nb_part_countries <- left_join(count_part_typ_misc, countryExData, by = c("pays_harmo" = "Country"))
+
+# Il y a 33 pays non disponibles dans le package R, les voici :
+df_nb_part_countries_na <- df_nb_part_countries %>%
+  filter(is.na(ISO3V10) & !is.na(pays_harmo))
+write.xlsx(df_nb_part_countries_na, "D:/APC Jaime T/df_nb_part_countries_na.xlsx" , all = TRUE)
+#####################################################
+# récupérer les infos géographiques de ces pays manquants
+# Créer un dataframe avec les informations
+data_pays_na <- data.frame(
+  pays_harmo = c("Afghanistan", "Andorra", "Bahrain", "Barbados", "Bhutan", "Brunei", "Cabo Verde", "Central African Republic", "Dominican Republic", "Eswatini", "Gambia", "Gibraltar", "Grenada", "Hong Kong", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Macao", "Maldives", "Malta", "Monaco", "Montenegro", "Qatar", "Réunion", "San Marino", "Serbia", "Seychelles", "Singapore", "Somalia", "Suriname", "The Bahamas", "United Arab Emirates"),
+  ISO3V10 = c("AFG", "AND", "BHR", "BRB", "BTN", "BRN", "CPV", "CAF", "DOM", "SWZ", "GMB", "GIB", "GRD", "HKG", "LSO", "LBR", "LBY", "LIE", "MAC", "MDV", "MLT", "MCO", "MNE", "QAT", "REU", "SMR", "SRB", "SYC", "SGP", "SOM", "SUR", "BHS", "ARE"),
+  EPI_regions = c("Asia & Pacific", "Europe", "Middle East", "Americas", "Asia & Pacific", "Asia & Pacific", "Africa", "Africa", "Americas", "Africa", "Africa", "Europe", "Americas", "Asia & Pacific", "Africa", "Africa", "Africa", "Europe", "Asia & Pacific", "Europe", "Europe", "Europe", "Europe", "Middle East", "Africa", "Europe", "Europe", "Africa", "Asia & Pacific", "Africa", "Americas", "Americas", "Middle East"))
+
+# Mettre à jour les valeurs de df_nb_part_countries
+
+# Itérer à travers les valeurs de pays_harmo dans data_pays_na
+for (i in 1:length(data_pays_na$pays_harmo)) {
+  pays_harmo <- data_pays_na$pays_harmo[i]
+  
+  # Mettre à jour les valeurs de df_nb_part_countries
+  df_nb_part_countries$ISO3V10[df_nb_part_countries$pays_harmo == pays_harmo & is.na(df_nb_part_countries$ISO3V10)] <- data_pays_na$ISO3V10[i]
+  df_nb_part_countries$EPI_regions[df_nb_part_countries$pays_harmo == pays_harmo & is.na(df_nb_part_countries$EPI_regions)] <- data_pays_na$EPI_regions[i]
+}
+
+write.xlsx(df_nb_part_countries[,1:11], "D:/APC Jaime T/df_nb_part_countries.xlsx" , all = TRUE)
 
