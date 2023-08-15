@@ -734,7 +734,7 @@ for (i in 1:length(data_pays_na$pays_harmo)) {
   df_nb_part_countries$EPI_regions[df_nb_part_countries$pays_harmo == pays_harmo & is.na(df_nb_part_countries$EPI_regions)] <- data_pays_na$EPI_regions[i]
 }
 
-write.xlsx(df_nb_part_countries[,1:11], "D:/APC Jaime T/df_nb_part_countries2.xlsx" , all = TRUE)
+write.xlsx(df_nb_part_countries[,1:11], "D:/APC Jaime T/df_nb_part_countries3.xlsx" , all = TRUE)
 
 ###########################################################
 ###########################################################
